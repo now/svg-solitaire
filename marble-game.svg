@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 20010904//EN"
+    "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg onload="init(evt)" width="500" height="500" zoomAndPan="disable"
+     viewbox="0 0 500 500"
+     xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink">
+  <script type="text/ecmascript"><![CDATA[
+    var SVGNS = "http://www.w3.org/2000/svg";
+
+    function Marble(owner) {
+      this.representation = document.createElementNS(SVGNS, "circle");
+      this.representation.setAttributeNS(null, "r", Marble.radius);
+      this.representation.setAttributeNS(null, "fill", "white");
+      this.representation.setAttributeNS(null, "fill-opacity", "0.8");
+      this.representation.addEventListener("click", function(event) { owner.marbleClicked(event); }, false);
+    }
+
+    Marble.radius = 10;
+    Marble.ispace = 5;
+
+    Marble.prototype = {
+      move: function(cx, cy) {
+        this.representation.setAttributeNS(null, "cx", cx);
+        this.representation.setAttributeNS(null, "cy", cy);
+        this.moveToTop();
+      },
+
+      moveToTop: function() {
+        if (world)
+          world.representation.appendChild(this.representation);
+        //        if (this.representation.parent) {
+        // this.representation.parent.appendChild(this.representation);
+        // }
+      }
+    };
+
+    function Placeholder(owner, cx, cy) {
+      this.representation = document.createElementNS(SVGNS, "circle");
+      this.representation.setAttributeNS(null, "cx", cx);
+      this.representation.setAttributeNS(null, "cy", cy);
+      this.representation.setAttributeNS(null, "r", Placeholder.radius);
+      this.representation.setAttributeNS(null, "fill", "purple");
+      this.representation.setAttributeNS(null, "fill-opacity", "0.2");
+      this.representation.addEventListener("click", function(event) { owner.placeholderClicked(event); }, false);
+    };
+
+    Placeholder.radius = 8;
+
+    Placeholder.prototype = {
+      get marble() {
+        return this.mMarble;
+      },
+
+      set marble(marble) {
+        this.mMarble = marble;
+      }
+    };
+
+    function Playfield() {
+      this.representation = document.createElementNS(SVGNS, "circle");
+      this.representation.setAttributeNS(null, "cx", World.width);
+      this.representation.setAttributeNS(null, "cy", World.width);
+      this.representation.setAttributeNS(null, "r", World.width - Moat.width);
+
+      this.grid = new Array(Playfield.marbles_in_a_row);
+      for (var i = 0; i < this.grid.length; i++)
+        this.grid[i] = new Array(this.grid.length);
+
+      this.firstMove = true;
+    }
+
+    Playfield.marbles_in_a_row = 7;
+
+    Playfield.prototype = {
+      init: function(world) {
+        for (var i = 0; i < this.grid.length; i++)
+          for (var j = 0; j < this.grid[i].length; j++)
+            this.fill(world, i, j);
+      },
+
+      fill: function(world, i, j) {
+        if ((j < 2 || j > 4) && (i < 2 || i > 4))
+          return;
+
+        var cx = this.calculateC(i);
+        var cy = this.calculateC(j);
+        this.grid[i][j] = new Placeholder(this, cx, cy);
+        this.grid[i][j].marble = new Marble(this);
+        this.grid[i][j].marble.move(cx, cy);
+        world.appendChild(this.grid[i][j].representation);
+        world.appendChild(this.grid[i][j].marble.representation);
+      },
+
+      calculateC: function(index) {
+        return World.width + Marble.radius + Marble.ispace / 2 -
+               ((Playfield.marbles_in_a_row / 2) * (Marble.radius * 2 + Marble.ispace)) +
+               index * (Marble.radius * 2 + Marble.ispace);
+      },
+
+      marbleClicked: function(event) {
+        var slot = this.findSlot(event.target);
+        if (!slot)
+          return;
+
+        var marble = this.grid[slot[0]][slot[1]].marble;
+
+        if (this.firstMove) {
+          world.moat.claimMarble(marble);
+          this.grid[slot[0]][slot[1]].marble = null;
+          this.firstMove = false;
+        } else {
+          if (this.activeMarble)
+              this.activeMarble.representation.setAttributeNS(null, "fill", "white");
+          marble.representation.setAttributeNS(null, "fill", "steelblue");
+          this.activeMarble = marble;
+        }
+      },
+
+      placeholderClicked: function(event) {
+        if (!this.activeMarble)
+          return;
+
+        var slot = this.findSlot(event.target);
+        if (!slot)
+          return;
+
+        var placeholder = this.grid[slot[0]][slot[1]];
+
+        if (placeholder.marble != null) {
+          alert("that's weird, marble got clicked when it shouldn't...");
+          return;
+        }
+
+        var oldSlot = this.findSlot(this.activeMarble.representation);
+        if (!oldSlot) {
+          alert("no slot for active marble?");
+          return;
+        }
+
+        var jumpSlot = this.findJumpSlot(oldSlot, slot);
+        if (jumpSlot && this.grid[jumpSlot[0]][jumpSlot[1]].marble) {
+          this.grid[oldSlot[0]][oldSlot[1]].marble = null;
+          world.moat.claimMarble(this.grid[jumpSlot[0]][jumpSlot[1]].marble);
+          this.grid[jumpSlot[0]][jumpSlot[1]].marble = null;
+
+          placeholder.marble = this.activeMarble;
+          placeholder.marble.representation.setAttributeNS(null, "fill", "white");
+          placeholder.marble.move(parseFloat(placeholder.representation.getAttributeNS(null, "cx")),
+                                  parseFloat(placeholder.representation.getAttributeNS(null, "cy")));
+          this.activeMarble = null;
+
+          this.checkForEndGameState();
+        }
+      },
+
+      findJumpSlot: function(from, to) {
+        if (from[0] == to[0]) { // same row
+          if (from[1] == to[1] - 2) // two marbles to the left
+            return [from[0], from[1] + 1];
+          else if (from[1] == to[1] + 2) // two marbles to the right
+            return [from[0], from[1] - 1];
+          else
+            return null;
+        } else if (from[1] == to[1]) { // same column
+          if (from[0] == to[0] - 2) // two marbles up
+            return [from[0] + 1, from[1]];
+          else if (from[0] == to[0] + 2) // two marbles down
+            return [from[0] - 1, from[1]];
+          else
+            return null;
+        } else {
+          return null;
+        }
+      },
+
+      // go over all slots and for each marble, see if there is a valid
+      // move for it.  If there is, then we can continue.  If there isn't,
+      // either we have a successful cleanup, i.e., only one marble left,
+      // or we have lost the game by having two or more marbles that can't
+      // be moved.
+      checkForEndGameState: function() {
+        for (var i = 0; i < this.grid.length; i++)
+          for (var j = 0; j < this.grid[i].length; j++)
+            if (this.grid[i][j] && this.grid[i][j].marble) {
+              // call this.findJumpSlot on the possible destinations of this
+              // marble and see if there are any (destinations and jumpslots
+              // that is).
+            }
+      },
+
+      findSlot: function(representation) {
+        for (var i = 0; i < this.grid.length; i++)
+          for (var j = 0; j < this.grid[i].length; j++)
+            if (this.grid[i][j] &&
+                (this.grid[i][j].representation == representation ||
+                 (this.grid[i][j].marble &&
+                  this.grid[i][j].marble.representation == representation)))
+              return [i, j];
+
+        return null;
+      }
+    };
+
+    function Moat() {
+      this.representation = document.createElementNS(SVGNS, "circle");
+      this.representation.setAttributeNS(null, "cx", World.width);
+      this.representation.setAttributeNS(null, "cy", World.width);
+      this.representation.setAttributeNS(null, "r", World.width);
+      this.marbles = [];
+    }
+
+    Moat.width = Marble.radius * 2;
+
+    Moat.prototype = {
+      claimMarble: function(marble) {
+        this.marbles.push(marble);
+        this.rearrangeMarbles();
+      },
+
+      rearrangeMarbles: function() {
+        var cx = parseFloat(this.representation.getAttributeNS(null, "cx"));
+        var cy = parseFloat(this.representation.getAttributeNS(null, "cy"));
+        var r = parseFloat(this.representation.getAttributeNS(null, "r")) - Marble.radius;
+
+        var d = 2 * Math.PI / (Marble.radius * 4 - 4); // 33 = number of marbles
+        var base = 0.5 * Math.PI - d * ((this.marbles.length - 1) / 2);
+        this.marbles.forEach(function(marble, i) {
+          var t = base + d * i;
+          marble.move(cx + r * Math.cos(t), cy + r * Math.sin(t));
+        });
+      }
+    };
+
+    function World() {
+      this.representation = document.getElementById("world");
+
+      this.moat = new Moat();
+      this.representation.appendChild(this.moat.representation);
+
+      this.playfield = new Playfield();
+      this.representation.appendChild(this.playfield.representation);
+      this.playfield.init(this.representation);
+    }
+
+    World.width = Marble.ispace * (Playfield.marbles_in_a_row + 1) +
+                  Marble.radius * Playfield.marbles_in_a_row +
+                  Moat.width;
+
+    var world;
+
+    function init(event) {
+      world = new World();
+    }
+  ]]></script>
+  <desc>Marble game</desc>
+  <g id="world" stroke="rgb(192,124,158)" fill="rgb(192,124,158)" fill-opacity="0.5">
+    <!--
+    <circle id="moat" fill="yellow"/>
+    <circle id="playfield" fill="brown"/>
+    -->
+  </g>
+</svg>
